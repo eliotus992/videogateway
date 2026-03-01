@@ -1,0 +1,45 @@
+{
+  "name": "videogateway",
+  "version": "0.1.0",
+  "description": "Unified AI video generation gateway - multi-provider, cost-optimized routing, async queue",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write src/**/*.ts"
+  },
+  "dependencies": {
+    "hono": "^4.7.2",
+    "@hono/node-server": "^1.13.8",
+    "zod": "^3.24.2",
+    "bullmq": "^5.41.8",
+    "ioredis": "^5.5.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.8",
+    "@types/uuid": "^9.0.8",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.7",
+    "eslint": "^9.21.0",
+    "prettier": "^3.5.2"
+  },
+  "keywords": [
+    "ai",
+    "video-generation",
+    "gateway",
+    "seedance",
+    "kling",
+    "runway",
+    "multi-provider"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eliotus992/videogateway.git"
+  }
+}

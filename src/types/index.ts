@@ -1,0 +1,115 @@
+// Video generation status
+export type GenerationStatus = 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
+
+// Supported video models
+export type VideoModel = 
+  | 'seedance-1.0'
+  | 'seedance-1.0-pro'
+  | 'kling-1.6'
+  | 'kling-1.0'
+  | 'runway-gen3'
+  | 'runway-gen2'
+  | 'pika-2.0'
+  | 'luma-1.0';
+
+// Provider identifiers
+export type ProviderId = 'seedance' | 'kling' | 'runway' | 'pika' | 'luma';
+
+// Resolution options
+export type Resolution = '480p' | '720p' | '1080p' | '4k';
+
+// Aspect ratio
+export type AspectRatio = '16:9' | '9:16' | '1:1' | '4:3' | '3:4';
+
+// Video generation request
+export interface VideoGenerationRequest {
+  model: VideoModel;
+  prompt: string;
+  negative_prompt?: string;
+  duration?: number; // seconds
+  resolution?: Resolution;
+  aspect_ratio?: AspectRatio;
+  callback_url?: string;
+  metadata?: Record<string, string>;
+}
+
+// Video generation response
+export interface VideoGenerationResponse {
+  id: string;
+  status: GenerationStatus;
+  model: VideoModel;
+  provider: ProviderId;
+  created_at: string;
+  updated_at: string;
+  estimated_seconds?: number;
+  progress?: number;
+  error?: string;
+}
+
+// Video generation result
+export interface VideoGenerationResult {
+  id: string;
+  status: GenerationStatus;
+  video_url?: string;
+  thumbnail_url?: string;
+  duration?: number;
+  resolution?: Resolution;
+  cost_usd?: number;
+  provider: ProviderId;
+  created_at: string;
+  completed_at?: string;
+}
+
+// Provider configuration
+export interface ProviderConfig {
+  id: ProviderId;
+  name: string;
+  enabled: boolean;
+  api_key: string;
+  base_url?: string;
+  cost_per_second: Record<Resolution, number>;
+  max_duration: number;
+  supported_models: VideoModel[];
+  rate_limit_rpm: number;
+  timeout_seconds: number;
+}
+
+// Routing strategy
+export type RoutingStrategy = 'cost_optimized' | 'speed' | 'quality' | 'fallback';
+
+// Routing configuration
+export interface RoutingConfig {
+  strategy: RoutingStrategy;
+  providers: ProviderConfig[];
+  fallback_enabled: boolean;
+  max_retries: number;
+}
+
+// Queue job data
+export interface GenerationJob {
+  id: string;
+  request: VideoGenerationRequest;
+  provider: ProviderId;
+  attempts: number;
+  max_attempts: number;
+  created_at: number;
+}
+
+// Provider adapter interface
+export interface ProviderAdapter {
+  readonly id: ProviderId;
+  readonly name: string;
+  
+  validateRequest(request: VideoGenerationRequest): boolean;
+  estimateCost(request: VideoGenerationRequest): number;
+  estimateTime(request: VideoGenerationRequest): number;
+  
+  submit(request: VideoGenerationRequest): Promise<{ provider_job_id: string; estimated_seconds: number }>;
+  checkStatus(provider_job_id: string): Promise<{
+    status: GenerationStatus;
+    progress?: number;
+    video_url?: string;
+    error?: string;
+  }>;
+  cancel(provider_job_id: string): Promise<boolean>;
+}
