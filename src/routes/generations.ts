@@ -1,41 +1,53 @@
 import { Hono } from 'hono';
 import { v4 as uuidv4 } from 'uuid';
 import { VideoGenerationRequestSchema } from '../types/schemas.js';
-import type { VideoGenerationResponse, VideoGenerationResult } from '../types/index.js';
-import { ProviderRegistry } from '../providers/index.js';
-
-// In-memory store for MVP (replace with Redis/D1 in production)
-const generationsStore = new Map<string, VideoGenerationResponse & { result?: VideoGenerationResult }>();
-
-// Provider registry
-const registry = new ProviderRegistry();
-
-// Initialize providers from env (in production, load from config)
-function initProviders() {
-  if (process.env.SEEDANCE_API_KEY) {
-    const { SeedanceProvider } = await import('../providers/seedance.js');
-    registry.register(new SeedanceProvider(process.env.SEEDANCE_API_KEY));
-  }
-  if (process.env.KLING_API_KEY) {
-    const { KlingProvider } = await import('../providers/kling.js');
-    registry.register(new KlingProvider(process.env.KLING_API_KEY));
-  }
-  if (process.env.RUNWAY_API_KEY) {
-    const { RunwayProvider } = await import('../providers/runway.js');
-    registry.register(new RunwayProvider(process.env.RUNWAY_API_KEY));
-  }
-}
+import type { VideoGenerationResponse, VideoGenerationResult, GenerationJob } from '../types/index.js';
+import { ProviderRegistry, createProvider } from '../providers/index.js';
+import { addGenerationJob, getJobStatus } from '../queue/index.js';
+import { authMiddleware } from '../auth/api-keys.js';
 
 const app = new Hono();
 
-// POST /v1/video/generations - Create new generation
+// Provider registry - 全局单例
+const registry = new ProviderRegistry();
+
+// 初始化 providers
+export function initProvidersFromEnv() {
+  if (process.env.SEEDANCE_API_KEY) {
+    registry.register(createProvider('seedance', process.env.SEEDANCE_API_KEY));
+  }
+  if (process.env.KLING_API_KEY) {
+    registry.register(createProvider('kling', process.env.KLING_API_KEY));
+  }
+  if (process.env.RUNWAY_API_KEY) {
+    registry.register(createProvider('runway', process.env.RUNWAY_API_KEY));
+  }
+  
+  console.log(`[Providers] Registered: ${registry.getAll().map(p => p.name).join(', ') || 'None'}`);
+}
+
+// 检查 providers 是否初始化
+app.use('*', (c, next) => {
+  if (registry.getAll().length === 0) {
+    return c.json({ 
+      error: 'No providers configured. Set SEEDANCE_API_KEY, KLING_API_KEY, or RUNWAY_API_KEY.',
+      code: 'NO_PROVIDERS'
+    }, 503);
+  }
+  return next();
+});
+
+// 应用认证中间件
+app.use('*', authMiddleware);
+
+// POST /v1/video/generations - 创建生成任务
 app.post('/', async (c) => {
   const body = await c.req.json();
   
-  // Validate request
+  // 验证请求
   const validated = VideoGenerationRequestSchema.parse(body);
   
-  // Find suitable providers
+  // 找到适合的 providers
   const providers = registry.findForRequest(validated);
   if (providers.length === 0) {
     return c.json({
@@ -44,165 +56,128 @@ app.post('/', async (c) => {
     }, 400);
   }
 
-  // Select provider (cost-optimized by default)
+  // 选择 provider（成本优化）
   const provider = providers[0];
   
-  // Create generation record
+  // 创建任务 ID
   const id = `vg_${uuidv4().replace(/-/g, '').slice(0, 16)}`;
-  const now = new Date().toISOString();
   
-  const generation: VideoGenerationResponse = {
+  // 准备任务数据
+  const jobData: GenerationJob = {
+    id,
+    request: validated,
+    provider: provider.id,
+    attempts: 0,
+    max_attempts: 3,
+    created_at: Date.now()
+  };
+
+  // 添加到队列
+  await addGenerationJob(jobData, validated.callback_url);
+
+  // 返回响应
+  const response: VideoGenerationResponse = {
     id,
     status: 'pending',
     model: validated.model,
     provider: provider.id,
-    created_at: now,
-    updated_at: now,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     estimated_seconds: provider.estimateTime(validated)
   };
 
-  generationsStore.set(id, generation);
-
-  // Submit to provider asynchronously
-  // In production, this should go to a queue (BullMQ)
-  submitToProvider(id, validated, provider).catch(console.error);
-
-  return c.json(generation, 201);
+  return c.json(response, 202); // 202 Accepted 表示异步处理
 });
 
-// GET /v1/video/generations/:id - Get generation status
-app.get('/:id', (c) => {
+// GET /v1/video/generations/:id - 获取任务状态
+app.get('/:id', async (c) => {
   const id = c.req.param('id');
-  const generation = generationsStore.get(id);
   
-  if (!generation) {
+  // 从队列获取状态
+  const jobStatus = await getJobStatus(id);
+  
+  if (!jobStatus) {
     return c.json({ error: 'Generation not found', code: 'NOT_FOUND' }, 404);
   }
 
-  return c.json(generation);
+  // 转换状态格式
+  const statusMap: Record<string, string> = {
+    'waiting': 'pending',
+    'active': 'processing',
+    'completed': 'completed',
+    'failed': 'failed',
+    'delayed': 'queued'
+  };
+
+  return c.json({
+    id: jobStatus.id,
+    status: statusMap[jobStatus.state] || jobStatus.state,
+    progress: jobStatus.progress,
+    created_at: new Date(jobStatus.created_at).toISOString(),
+    ...(jobStatus.finished_at && { 
+      completed_at: new Date(jobStatus.finished_at).toISOString() 
+    }),
+    ...(jobStatus.failed_reason && { error: jobStatus.failed_reason }),
+    ...(jobStatus.returnvalue && { result: jobStatus.returnvalue })
+  });
 });
 
-// GET /v1/video/generations/:id/result - Get generation result
-app.get('/:id/result', (c) => {
+// GET /v1/video/generations/:id/result - 获取结果
+app.get('/:id/result', async (c) => {
   const id = c.req.param('id');
-  const generation = generationsStore.get(id);
   
-  if (!generation) {
+  const jobStatus = await getJobStatus(id);
+  
+  if (!jobStatus) {
     return c.json({ error: 'Generation not found', code: 'NOT_FOUND' }, 404);
   }
 
-  if (generation.status !== 'completed') {
+  if (jobStatus.state !== 'completed') {
     return c.json({
       error: 'Generation not completed',
-      status: generation.status,
+      status: jobStatus.state,
+      progress: jobStatus.progress,
       code: 'NOT_READY'
     }, 400);
   }
 
-  return c.json(generation.result);
+  const result = jobStatus.returnvalue as VideoGenerationResult;
+  
+  return c.json({
+    id,
+    status: 'completed',
+    video_url: result.video_url,
+    provider: result.provider,
+    created_at: new Date(jobStatus.created_at).toISOString(),
+    completed_at: new Date(jobStatus.finished_at!).toISOString()
+  });
 });
 
-// DELETE /v1/video/generations/:id - Cancel generation
+// DELETE /v1/video/generations/:id - 取消任务
 app.delete('/:id', async (c) => {
   const id = c.req.param('id');
-  const generation = generationsStore.get(id);
   
-  if (!generation) {
+  const jobStatus = await getJobStatus(id);
+  
+  if (!jobStatus) {
     return c.json({ error: 'Generation not found', code: 'NOT_FOUND' }, 404);
   }
 
-  if (['completed', 'failed'].includes(generation.status)) {
-    return c.json({ error: 'Cannot cancel completed generation', code: 'INVALID_STATE' }, 400);
+  if (['completed', 'failed'].includes(jobStatus.state)) {
+    return c.json({ 
+      error: 'Cannot cancel completed generation', 
+      code: 'INVALID_STATE' 
+    }, 400);
   }
 
-  // In production, cancel via provider
-  generation.status = 'failed';
-  generation.error = 'Cancelled by user';
-  generation.updated_at = new Date().toISOString();
+  // 从队列中移除
+  const { generationQueue } = await import('../queue/index.js');
+  await generationQueue.remove(id);
 
-  return c.json({ success: true });
-});
-
-// Async submission (replace with BullMQ in production)
-async function submitToProvider(
-  id: string,
-  request: import('../types/schemas.js').VideoGenerationRequestInput,
-  provider: import('../providers/index.js').ProviderAdapter
-): Promise<void> {
-  const generation = generationsStore.get(id);
-  if (!generation) return;
-
-  try {
-    generation.status = 'queued';
-    generation.updated_at = new Date().toISOString();
-
-    const { provider_job_id, estimated_seconds } = await provider.submit(request);
-    
-    generation.status = 'processing';
-    generation.estimated_seconds = estimated_seconds;
-    generation.updated_at = new Date().toISOString();
-
-    // Poll for completion (in production, use webhooks)
-    pollForCompletion(id, provider, provider_job_id);
-  } catch (error) {
-    generation.status = 'failed';
-    generation.error = error instanceof Error ? error.message : 'Unknown error';
-    generation.updated_at = new Date().toISOString();
-  }
-}
-
-// Poll for completion (replace with webhook in production)
-async function pollForCompletion(
-  id: string,
-  provider: import('../providers/index.js').ProviderAdapter,
-  provider_job_id: string
-): Promise<void> {
-  const maxAttempts = 60; // 5 minutes with 5s interval
-  const interval = 5000;
-
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise(resolve => setTimeout(resolve, interval));
-
-    const generation = generationsStore.get(id);
-    if (!generation || generation.status === 'failed') return;
-
-    try {
-      const status = await provider.checkStatus(provider_job_id);
-      
-      generation.status = status.status;
-      generation.progress = status.progress;
-      generation.updated_at = new Date().toISOString();
-
-      if (status.status === 'completed') {
-        generation.result = {
-          id,
-          status: 'completed',
-          video_url: status.video_url,
-          provider: provider.id,
-          created_at: generation.created_at,
-          completed_at: new Date().toISOString()
-        };
-        break;
-      }
-
-      if (status.status === 'failed') {
-        generation.error = status.error || 'Provider failed';
-        break;
-      }
-    } catch (error) {
-      console.error(`Poll error for ${id}:`, error);
-    }
-  }
-}
-
-// Initialize providers on first request
-let initialized = false;
-app.use('*', async (c, next) => {
-  if (!initialized) {
-    await initProviders();
-    initialized = true;
-  }
-  await next();
+  return c.json({ 
+    success: true, 
+    message: 'Generation cancelled' 
+  });
 });
 
 export const generationsRouter = app;
