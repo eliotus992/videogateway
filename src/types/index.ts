@@ -1,19 +1,42 @@
 // Video generation status
-export type GenerationStatus = 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
+export type GenerationStatus = 'pending' | 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 // Supported video models
 export type VideoModel = 
+  // ByteDance
   | 'seedance-1.0'
   | 'seedance-1.0-pro'
+  // Kling
   | 'kling-1.6'
   | 'kling-1.0'
+  // Runway
   | 'runway-gen3'
   | 'runway-gen2'
+  // Pika
   | 'pika-2.0'
-  | 'luma-1.0';
+  | 'pika-1.5'
+  // Luma
+  | 'luma-1.0'
+  | 'luma-1.5'
+  // Haiper
+  | 'haiper-v2'
+  | 'haiper-v1'
+  // Hailuo
+  | 'hailuo-video-v1'
+  // Stable Video
+  | 'stable-video-1-1'
+  | 'stable-video-1-0';
 
 // Provider identifiers
-export type ProviderId = 'seedance' | 'kling' | 'runway' | 'pika' | 'luma';
+export type ProviderId = 
+  | 'seedance' 
+  | 'kling' 
+  | 'runway' 
+  | 'pika'
+  | 'luma'
+  | 'haiper'
+  | 'hailuo'
+  | 'stable-video';
 
 // Resolution options
 export type Resolution = '480p' | '720p' | '1080p' | '4k';
@@ -112,4 +135,41 @@ export interface ProviderAdapter {
     error?: string;
   }>;
   cancel(provider_job_id: string): Promise<boolean>;
+}
+
+// Usage statistics
+export interface UsageStats {
+  total_generations: number;
+  completed: number;
+  failed: number;
+  pending: number;
+  total_cost_usd: number;
+  by_provider: Record<ProviderId, {
+    count: number;
+    cost_usd: number;
+    avg_duration_seconds: number;
+  }>;
+  by_day: Array<{
+    date: string;
+    count: number;
+    cost_usd: number;
+  }>;
+}
+
+// Dashboard data
+export interface DashboardData {
+  usage: UsageStats;
+  recent_generations: VideoGenerationResult[];
+  providers_status: Array<{
+    id: ProviderId;
+    name: string;
+    configured: boolean;
+    healthy: boolean;
+    last_used?: string;
+  }>;
+  rate_limit_status: {
+    limit: number;
+    used: number;
+    reset_at: string;
+  };
 }
