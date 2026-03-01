@@ -1,3 +1,6 @@
+// 从 image.ts 导出图像生成类型
+export * from './image.js';
+
 // Video generation status
 export type GenerationStatus = 'pending' | 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
@@ -25,9 +28,13 @@ export type VideoModel =
   | 'hailuo-video-v1'
   // Stable Video
   | 'stable-video-1-1'
-  | 'stable-video-1-0';
+  | 'stable-video-1-0'
+  // Replicate Video
+  | 'replicate-svd'
+  | 'replicate-animate'
+  | 'replicate-zeroscope';
 
-// Provider identifiers
+// Provider identifiers - 包含图像和视频 providers
 export type ProviderId = 
   | 'seedance' 
   | 'kling' 
@@ -36,7 +43,9 @@ export type ProviderId =
   | 'luma'
   | 'haiper'
   | 'hailuo'
-  | 'stable-video';
+  | 'stable-video'
+  | 'stability'
+  | 'replicate';
 
 // Resolution options
 export type Resolution = '480p' | '720p' | '1080p' | '4k';
@@ -111,7 +120,8 @@ export interface RoutingConfig {
 // Queue job data
 export interface GenerationJob {
   id: string;
-  request: VideoGenerationRequest;
+  request: VideoGenerationRequest | ImageGenerationRequest;
+  type: 'video' | 'image';
   provider: ProviderId;
   attempts: number;
   max_attempts: number;
@@ -123,6 +133,7 @@ export interface ProviderAdapter {
   readonly id: ProviderId;
   readonly name: string;
   
+  // Video methods
   validateRequest(request: VideoGenerationRequest): boolean;
   estimateCost(request: VideoGenerationRequest): number;
   estimateTime(request: VideoGenerationRequest): number;
@@ -140,18 +151,21 @@ export interface ProviderAdapter {
 // Usage statistics
 export interface UsageStats {
   total_generations: number;
+  total_images: number;  // 新增：图像生成统计
   completed: number;
   failed: number;
   pending: number;
   total_cost_usd: number;
   by_provider: Record<ProviderId, {
     count: number;
+    image_count?: number;  // 新增
     cost_usd: number;
     avg_duration_seconds: number;
   }>;
   by_day: Array<{
     date: string;
     count: number;
+    image_count?: number;  // 新增
     cost_usd: number;
   }>;
 }
@@ -160,10 +174,13 @@ export interface UsageStats {
 export interface DashboardData {
   usage: UsageStats;
   recent_generations: VideoGenerationResult[];
+  recent_images: ImageGenerationResult[];  // 新增
   providers_status: Array<{
     id: ProviderId;
     name: string;
     configured: boolean;
+    supports_image?: boolean;  // 新增
+    supports_video?: boolean;  // 新增
     healthy: boolean;
     last_used?: string;
   }>;

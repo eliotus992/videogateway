@@ -1,4 +1,4 @@
--- D1 数据库 Schema v3 (支持 8 个 Provider)
+-- D1 数据库 Schema v4 (支持图像生成)
 
 -- API Keys 表
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     key_hash TEXT NOT NULL,
     name TEXT NOT NULL,
     user_id TEXT NOT NULL DEFAULT 'default',
-    permissions TEXT NOT NULL, -- JSON array
+    permissions TEXT NOT NULL,
     rate_limit INTEGER DEFAULT 60,
     is_active INTEGER DEFAULT 1,
     created_at TEXT NOT NULL,
@@ -26,19 +26,37 @@ CREATE TABLE IF NOT EXISTS user_providers (
     UNIQUE(user_id, provider)
 );
 
--- Generations 表（含成本统计）
+-- 视频生成表
 CREATE TABLE IF NOT EXISTS generations (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
-    status TEXT NOT NULL, -- pending, processing, completed, failed, cancelled
+    status TEXT NOT NULL,
     model TEXT NOT NULL,
     provider TEXT NOT NULL,
     progress INTEGER DEFAULT 0,
     video_url TEXT,
     error TEXT,
     cost_usd REAL DEFAULT 0,
-    duration INTEGER, -- 视频时长（秒）
+    duration INTEGER,
     prompt TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
+-- 图像生成表（新增）
+CREATE TABLE IF NOT EXISTS image_generations (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    provider_job_id TEXT,
+    status TEXT NOT NULL, -- pending, processing, completed, failed
+    model TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    progress INTEGER DEFAULT 0,
+    image_urls TEXT, -- JSON array
+    error TEXT,
+    cost_usd REAL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     completed_at TEXT
@@ -49,7 +67,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     url TEXT NOT NULL,
-    events TEXT NOT NULL, -- JSON array
+    events TEXT NOT NULL,
     secret TEXT NOT NULL,
     is_active INTEGER DEFAULT 1,
     created_at TEXT NOT NULL
@@ -60,6 +78,13 @@ CREATE INDEX IF NOT EXISTS idx_generations_status ON generations(status);
 CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id);
 CREATE INDEX IF NOT EXISTS idx_generations_provider ON generations(provider);
 CREATE INDEX IF NOT EXISTS idx_generations_created ON generations(created_at);
+
+-- 图像生成索引（新增）
+CREATE INDEX IF NOT EXISTS idx_image_generations_status ON image_generations(status);
+CREATE INDEX IF NOT EXISTS idx_image_generations_user ON image_generations(user_id);
+CREATE INDEX IF NOT EXISTS idx_image_generations_provider ON image_generations(provider);
+CREATE INDEX IF NOT EXISTS idx_image_generations_created ON image_generations(created_at);
+
 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(is_active);
 CREATE INDEX IF NOT EXISTS idx_user_providers_user ON user_providers(user_id);

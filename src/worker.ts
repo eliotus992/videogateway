@@ -5,17 +5,18 @@ import { prettyJSON } from 'hono/pretty-json';
 import { errorHandler } from './middleware/error.js';
 import { providersRouter } from './routes/providers.js';
 import { generationsRouterV2 } from './routes/generations-v2.js';
+import { imagesRouter } from './routes/images.js';
 import { keysRouterWorker } from './routes/keys-worker.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { dashboardUIRouter } from './routes/dashboard-ui.js';
 import { healthRouter } from './routes/health.js';
 import { authMiddleware } from './auth/api-keys.js';
 
-// Workers 环境类型
 export type Bindings = {
   DB: D1Database;
   CACHE: KVNamespace;
   GENERATION_QUEUE: Queue;
+  // Video providers
   SEEDANCE_API_KEY?: string;
   KLING_API_KEY?: string;
   RUNWAY_API_KEY?: string;
@@ -24,6 +25,10 @@ export type Bindings = {
   HAIPER_API_KEY?: string;
   HAILUO_API_KEY?: string;
   STABLE_VIDEO_API_KEY?: string;
+  // Image providers
+  STABILITY_API_KEY?: string;
+  REPLICATE_API_KEY?: string;
+  OPENAI_API_KEY?: string;
   WEBHOOK_SECRET?: string;
 };
 
@@ -41,55 +46,63 @@ app.use('*', prettyJSON());
 // Error handling
 app.onError(errorHandler);
 
-// Dashboard UI（公开访问）
+// Dashboard UI (public)
 app.route('/dashboard', dashboardUIRouter);
 
-// API 路由（需要认证）
+// API routes (auth required)
 app.use('/v1/*', authMiddleware);
 app.route('/v1/providers', providersRouter);
 app.route('/v1/video/generations', generationsRouterV2);
+app.route('/v1/images/generations', imagesRouter);  // 新增图像生成
 app.route('/v1/keys', keysRouterWorker);
 app.route('/v1/dashboard', dashboardRouter);
 app.route('/health', healthRouter);
 
 // Root
 app.get('/', (c) => {
-  const defaultProviders = [];
-  if (c.env.SEEDANCE_API_KEY) defaultProviders.push('seedance');
-  if (c.env.KLING_API_KEY) defaultProviders.push('kling');
-  if (c.env.RUNWAY_API_KEY) defaultProviders.push('runway');
-  if (c.env.PIKA_API_KEY) defaultProviders.push('pika');
-  if (c.env.LUMA_API_KEY) defaultProviders.push('luma');
-  if (c.env.HAIPER_API_KEY) defaultProviders.push('haiper');
-  if (c.env.HAILUO_API_KEY) defaultProviders.push('hailuo');
-  if (c.env.STABLE_VIDEO_API_KEY) defaultProviders.push('stable-video');
+  const videoProviders = [];
+  const imageProviders = [];
+  
+  if (c.env.SEEDANCE_API_KEY) videoProviders.push('seedance');
+  if (c.env.KLING_API_KEY) videoProviders.push('kling');
+  if (c.env.RUNWAY_API_KEY) videoProviders.push('runway');
+  if (c.env.PIKA_API_KEY) videoProviders.push('pika');
+  if (c.env.LUMA_API_KEY) videoProviders.push('luma');
+  if (c.env.HAIPER_API_KEY) videoProviders.push('haiper');
+  if (c.env.HAILUO_API_KEY) videoProviders.push('hailuo');
+  if (c.env.STABLE_VIDEO_API_KEY) videoProviders.push('stable-video');
+  
+  if (c.env.STABILITY_API_KEY) imageProviders.push('stability');
+  if (c.env.REPLICATE_API_KEY) imageProviders.push('replicate');
+  if (c.env.OPENAI_API_KEY) imageProviders.push('openai');
 
   return c.json({
     name: 'VideoGateway',
-    version: '0.3.0',
+    version: '0.4.0',
     platform: 'Cloudflare Workers',
     mode: 'Self-hosted',
-    default_providers: defaultProviders,
-    supported_providers: [
-      'seedance', 'kling', 'runway', 'pika', 
-      'luma', 'haiper', 'hailuo', 'stable-video'
-    ],
+    video_providers: videoProviders,
+    image_providers: imageProviders,
     dashboard: '/dashboard',
     endpoints: {
-      'GET /dashboard': 'Web Dashboard UI',
-      'GET /v1/providers': 'List available providers',
-      'POST /v1/providers/:provider': 'Configure your provider API key',
-      'POST /v1/video/generations': 'Create video generation task',
-      'GET /v1/video/generations/:id': 'Get generation status',
+      // Video
+      'POST /v1/video/generations': 'Create video generation',
+      'GET /v1/video/generations/:id': 'Get video status',
+      // Image (NEW)
+      'POST /v1/images/generations': 'Create image generation',
+      'GET /v1/images/generations/:id': 'Get image status',
+      'GET /v1/images/generations/:id/result': 'Get image result',
+      // Provider
+      'GET /v1/providers': 'List providers',
+      'POST /v1/providers/:provider': 'Configure provider',
+      // Dashboard
       'GET /v1/dashboard': 'Get dashboard data',
-      'GET /v1/dashboard/stats': 'Get usage statistics',
-      'GET /health': 'Health check'
+      'GET /v1/dashboard/stats': 'Get usage statistics'
     },
     docs: 'https://github.com/eliotus992/videogateway'
   });
 });
 
-// 404 handler
 app.notFound((c) => {
   return c.json({ error: 'Not found', code: 'NOT_FOUND' }, 404);
 });
